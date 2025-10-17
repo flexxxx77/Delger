@@ -47,7 +47,8 @@ export default function PhotosPage() {
         <div className="grid">
           {items.map((p) => (
             <div className="item" key={p.id}>
-              <img className="thumb" src={p.url} alt={p.name} loading="lazy" />
+              {/* FULL image, no crop */}
+              <img className="thumb thumb--contain" src={p.url} alt={p.name} loading="lazy" />
               <div className="meta">
                 <div className="name" title={p.name}>{p.name}</div>
                 <div className="row">
