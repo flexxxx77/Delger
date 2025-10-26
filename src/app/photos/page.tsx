@@ -1,68 +1,45 @@
-"use client";
+'use client';
+import { useCallback, useEffect, useState } from 'react';
+import UploadBox from '@/components/UploadBox';
+import { MediaCard } from '@/components/MediaCard';
 
-import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
-import { addMedia, deleteMedia, getAllMedia, MediaRecord } from "../../lib/db";
-
-function formatBytes(n: number) {
-  if (!n) return "0 B";
-  const units = ["B","KB","MB","GB"]; let i=0; while(n>=1024 && i<units.length-1){ n/=1024; i++; }
-  return `${n.toFixed(1)} ${units[i]}`;
-}
+type Rec = { id:number; url:string; type:string; name:string; size:number; createdAt:string };
 
 export default function PhotosPage() {
-  const [items, setItems] = useState<(MediaRecord & { id: number; url: string })[]>([]);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [items, setItems] = useState<Rec[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  async function load() {
-    const recs = await getAllMedia("photos");
-    const withUrls = recs.map((r) => ({ ...(r as Required<MediaRecord>), id: r.id!, url: URL.createObjectURL(r.file) }));
-    setItems(prev => { prev.forEach(p=>URL.revokeObjectURL(p.url)); return withUrls; });
-  }
-  useEffect(() => { load(); return () => items.forEach(i=>URL.revokeObjectURL(i.url)); }, []);
+  const load = useCallback(async () => {
+    setLoading(true);
+    const r = await fetch('/api/media?bucket=photos', { cache: 'no-store' });
+    setItems(await r.json());
+    setLoading(false);
+  }, []);
 
-  async function onPick(files: FileList | null) {
-    if (!files) return;
-    for (const f of Array.from(files)) { if (f.type.startsWith("image")) await addMedia("photos", f); }
-    await load(); if (inputRef.current) inputRef.current.value = "";
-  }
-  async function onDelete(id: number, url: string) {
-    await deleteMedia("photos", id); URL.revokeObjectURL(url); await load();
-  }
+  useEffect(()=>{ load(); }, [load]);
+  const onDelete = (id:number) => setItems(p=>p.filter(x=>x.id!==id));
 
   return (
-    <div className="wrapper bg-photos">
-      <div className="card">
-        <div className="header">
-          <div className="h1">Photos</div>
-          <Link className="back" href="/">← Буцах</Link>
+    <div className="page-wrap">
+      <div className="page-header">
+        <div>
+          <h1>Photos</h1>
+          <p>Upload • View • Save</p>
         </div>
+      </div>
 
-        <div className="upload">
-          <input ref={inputRef} type="file" accept="image/*" multiple onChange={(e)=>onPick(e.target.files)} />
-          <button className="btn lg" onClick={()=>inputRef.current?.click()}>Upload photos</button>
-          <span className="small">PNG, JPG, HEIC, GIF …</span>
-        </div>
+      <UploadBox bucket="photos" onDone={load} />
 
-        <div className="grid">
-          {items.map((p) => (
-            <div className="item" key={p.id}>
-              {/* FULL image, no crop */}
-              <img className="thumb thumb--contain" src={p.url} alt={p.name} loading="lazy" />
-              <div className="meta">
-                <div className="name" title={p.name}>{p.name}</div>
-                <div className="row">
-                  <a className="btn" href={p.url} download={p.name}>Save</a>
-                  <button className="btn danger" onClick={() => onDelete(p.id, p.url)}>Delete</button>
-                </div>
-              </div>
-              <div className="meta small">
-                <span>{new Date(p.createdAt).toLocaleDateString()}</span>
-                <span>{formatBytes(p.size)}</span>
-              </div>
-            </div>
-          ))}
+      {loading && <div className="skeleton-grid"><div/><div/><div/><div/></div>}
+      {!loading && items.length===0 && (
+        <div className="empty">
+          <span>🖼️</span>
+          <p>No photos yet. Upload above.</p>
         </div>
+      )}
+
+      <div className="pro-grid">
+        {items.map(r => <MediaCard key={r.id} rec={r} onDelete={onDelete} />)}
       </div>
     </div>
   );

@@ -1,35 +1,54 @@
+// src/app/page.tsx
 "use client";
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { addMedia, getAllMedia } from "../lib/db";
+
+
+type Bucket = "photos" | "videos";
 
 export default function Home() {
   const photoInput = useRef<HTMLInputElement>(null);
   const videoInput = useRef<HTMLInputElement>(null);
   const [counts, setCounts] = useState({ photos: 0, videos: 0 });
+  const [busy, setBusy] = useState<Bucket | null>(null);
 
+  // Counts-ийг API-гаас авна
   useEffect(() => {
     async function load() {
-      const [ps, vs] = await Promise.all([getAllMedia("photos"), getAllMedia("videos")]);
-      setCounts({ photos: ps.length, videos: vs.length });
+      const [ps, vs] = await Promise.all([
+        fetch("/api/media?bucket=photos", { cache: "no-store" }).then((r) => r.json()),
+        fetch("/api/media?bucket=videos", { cache: "no-store" }).then((r) => r.json()),
+      ]);
+      setCounts({ photos: ps.length ?? 0, videos: vs.length ?? 0 });
     }
     load();
   }, []);
 
-  async function pick(type: "photos" | "videos", files: FileList | null) {
-    if (!files) return;
-    const list = Array.from(files);
-    for (const f of list) {
-      if (type === "photos" && f.type.startsWith("image")) await addMedia("photos", f);
-      if (type === "videos" && f.type.startsWith("video")) await addMedia("videos", f);
+  async function upload(bucket: Bucket, files: FileList | null) {
+    if (!files?.length) return;
+    const fd = new FormData();
+    [...files].forEach((f) => fd.append("files", f));
+
+    try {
+      setBusy(bucket);
+      const res = await fetch(`/api/media?bucket=${bucket}`, { method: "POST", body: fd });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(json.error || "Upload failed");
+        return;
+      }
+      // амжилттай бол тоолуураа шинэчилнэ
+      const inc = (json.uploaded?.length as number) || 0;
+      setCounts((c) => ({
+        photos: c.photos + (bucket === "photos" ? inc : 0),
+        videos: c.videos + (bucket === "videos" ? inc : 0),
+      }));
+    } finally {
+      setBusy(null);
+      if (bucket === "photos" && photoInput.current) photoInput.current.value = "";
+      if (bucket === "videos" && videoInput.current) videoInput.current.value = "";
     }
-    setCounts(c => ({
-      photos: c.photos + (type === "photos" ? list.filter(f=>f.type.startsWith("image")).length : 0),
-      videos: c.videos + (type === "videos" ? list.filter(f=>f.type.startsWith("video")).length : 0),
-    }));
-    if (type === "photos" && photoInput.current) photoInput.current.value = "";
-    if (type === "videos" && videoInput.current) videoInput.current.value = "";
   }
 
   return (
@@ -65,11 +84,35 @@ export default function Home() {
 
         {/* Quick actions */}
         <div className="quick">
-          <input ref={photoInput} type="file" accept="image/*" multiple onChange={e=>pick("photos", e.target.files)} />
-          <button className="btn lg" onClick={()=>photoInput.current?.click()}>Quick upload photos</button>
+          <input
+            ref={photoInput}
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={(e) => upload("photos", e.target.files)}
+          />
+          <button
+            className="btn lg"
+            onClick={() => photoInput.current?.click()}
+            disabled={busy !== null}
+          >
+            {busy === "photos" ? "Uploading photos…" : "Quick upload photos"}
+          </button>
 
-          <input ref={videoInput} type="file" accept="video/*" multiple onChange={e=>pick("videos", e.target.files)} />
-          <button className="btn lg" onClick={()=>videoInput.current?.click()}>Quick upload videos</button>
+          <input
+            ref={videoInput}
+            type="file"
+            accept="video/*"
+            multiple
+            onChange={(e) => upload("videos", e.target.files)}
+          />
+          <button
+            className="btn lg"
+            onClick={() => videoInput.current?.click()}
+            disabled={busy !== null}
+          >
+            {busy === "videos" ? "Uploading videos…" : "Quick upload videos"}
+          </button>
 
           <span className="stat">📸 {counts.photos} photos</span>
           <span className="stat">🎞️ {counts.videos} videos</span>

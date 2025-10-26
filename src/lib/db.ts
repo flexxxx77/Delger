@@ -1,63 +1,62 @@
-export type StoreName = "videos" | "photos";
+import 'server-only'; // ✅ client-с санамсаргүй импортлохоос хамгаална
+import { promises as fs } from 'fs';
+import path from 'path';
 
-export type MediaRecord = {
-  id?: number;
-  name: string;
+export type MediaInsert = { url: string; type: string; size: number; name: string };
+type Bucket = 'photos' | 'videos';
+
+type MediaRow = {
+  id: number;
+  bucket: Bucket;
+  url: string;
   type: string;
   size: number;
-  file: File; // File/Blob хадгална
-  createdAt: number;
+  name: string;
+  createdAt: string; // ISO
 };
 
-function openDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open("memories", 1);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains("videos")) {
-        db.createObjectStore("videos", { keyPath: "id", autoIncrement: true });
-      }
-      if (!db.objectStoreNames.contains("photos")) {
-        db.createObjectStore("photos", { keyPath: "id", autoIncrement: true });
-      }
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
+const DATA_DIR = path.join(process.cwd(), 'data');
+const DATA_FILE = path.join(DATA_DIR, 'store.json');
+
+async function ensureFile() {
+  try {
+    await fs.mkdir(DATA_DIR, { recursive: true });
+    await fs.access(DATA_FILE);
+  } catch {
+    const initial = { photos: [] as MediaRow[], videos: [] as MediaRow[], _seq: 1 };
+    await fs.writeFile(DATA_FILE, JSON.stringify(initial, null, 2), 'utf8');
+  }
 }
 
-export async function addMedia(store: StoreName, file: File): Promise<number> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(store, "readwrite");
-    const id = tx.objectStore(store).add({
-      name: file.name,
-      type: file.type,
-      size: file.size,
-      file,
-      createdAt: Date.now(),
-    } as MediaRecord);
-    id.onsuccess = () => resolve(id.result as number);
-    id.onerror = () => reject(id.error as DOMException);
-  });
+async function readStore(): Promise<{ photos: MediaRow[]; videos: MediaRow[]; _seq: number }> {
+  await ensureFile();
+  const raw = await fs.readFile(DATA_FILE, 'utf8');
+  return JSON.parse(raw);
 }
 
-export async function getAllMedia(store: StoreName): Promise<MediaRecord[]> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(store, "readonly");
-    const rq = tx.objectStore(store).getAll();
-    rq.onsuccess = () => resolve(rq.result as MediaRecord[]);
-    rq.onerror = () => reject(rq.error as DOMException);
-  });
+async function writeStore(store: { photos: MediaRow[]; videos: MediaRow[]; _seq: number }) {
+  await fs.writeFile(DATA_FILE, JSON.stringify(store, null, 2), 'utf8');
 }
 
-export async function deleteMedia(store: StoreName, id: number): Promise<void> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(store, "readwrite");
-    const rq = tx.objectStore(store).delete(id);
-    rq.onsuccess = () => resolve();
-    rq.onerror = () => reject(rq.error as DOMException);
-  });
+export async function addMedia(bucket: Bucket, data: MediaInsert): Promise<MediaRow> {
+  const store = await readStore();
+  const id = store._seq++;
+  const row: MediaRow = { id, bucket, ...data, createdAt: new Date().toISOString() };
+  store[bucket].push(row);
+  await writeStore(store);
+  return row;
+}
+
+export async function getAllMedia(bucket: Bucket): Promise<MediaRow[]> {
+  const store = await readStore();
+  return [...store[bucket]].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+}
+
+export async function deleteMedia(bucket: Bucket, id: number): Promise<void> {
+  const store = await readStore();
+  const idx = store[bucket].findIndex((r) => r.id === id);
+  if (idx >= 0) {
+    store[bucket].splice(idx, 1);
+    await writeStore(store);
+  }
 }
